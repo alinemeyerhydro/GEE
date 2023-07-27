@@ -1,0 +1,89 @@
+//Script to extract monthly water extent from Pekel et al. (2016)
+//around gauging stations in Google Earth Engine: https://code.earthengine.google.com/
+
+//Aline Meyer Oliveira
+
+//upload a shapefile with the gauging stations under "Assets" on the left
+var gauges = ee.FeatureCollection("users/alinemey/metrics_br");
+Map.addLayer(gauges, {color: 'red'}, 'gauges', true)
+
+var bufferBy = function(size) {
+  return function(feature) {
+    return feature.buffer(size);   
+  };
+};
+
+//define a buffer around the gauging station
+var pois = gauges.map(bufferBy(5000)); #here the buffer is 5000 meters
+Map.addLayer(pois, {color: 'black'}, 'gauges_buf', true,0.5)
+
+//in case you want to visualize the maximum water extent
+//var gsw = ee.Image('JRC/GSW1_0/GlobalSurfaceWater');
+//var max_extent = gsw.select('max_extent');
+//Map.addLayer(max_extent);
+//var poi=geometry
+
+
+for (var i = 0;i<pois.size().getInfo();i++){
+var poi = ee.Feature(pois.toList(pois.size()).get(i)).geometry()
+var code = ee.Feature(pois.toList(pois.size()).get(i)).get('gauge_id')
+var code = ee.String(code)
+
+var dataset = ee.ImageCollection('JRC/GSW1_3/MonthlyHistory')
+.filterBounds(poi)
+
+
+//counts number of pixels (total), water (2), and no data (0) inside the polygon (geometry)
+//add these information as property
+var count = function(image) {
+  var pixels = ee.Number(image.reduceRegion({
+  reducer: ee.Reducer.count(),
+  geometry: poi,
+  scale: 30,
+  }).get('water'));
+
+  var nodata = ee.Number(image.updateMask(image.eq(0))
+  .reduceRegion({
+  reducer: ee.Reducer.count(),
+  geometry: poi,
+  scale: 30,
+  }).get('water'));
+  var nodata_ratio=nodata.divide(pixels);
+  var valid_pixels = pixels.subtract(nodata)
+
+  var water = ee.Number(image.updateMask(image.eq(2))
+ .reduceRegion({
+  reducer: ee.Reducer.count(),
+  geometry: poi,
+  scale: 30,
+  }).get('water'));
+    var water_ratio = water.divide(valid_pixels).multiply(100);
+    //area expressed as a ratio between water pixels and total number of pixels (excluding no data!!)
+  
+  image = image.addBands(pixels);
+  image = image.addBands(nodata);
+  image = image.addBands(nodata_ratio);
+  image = image.addBands(valid_pixels);
+  image = image.addBands(water_ratio);
+  
+  
+return image.setMulti({pixels: pixels, water2: water,nodata2: nodata,valid_pixels: valid_pixels,water: water_ratio,  nodata: nodata_ratio});
+
+  
+};
+
+
+//calls function
+var area = dataset.select('water').map(count)
+//print(area)
+
+Export.table.toDrive({
+collection: area,
+  description: code.getInfo(),
+  folder: '5k_2022',
+fileFormat: 'CSV'
+});
+
+
+}
+
